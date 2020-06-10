@@ -1,7 +1,9 @@
 use std::{
     fmt,
     fmt::{Debug, Display},
-    fs::File
+    fs::File,
+    io,
+    path::Path
 };
 
 #[cfg(test)]
@@ -13,8 +15,9 @@ mod tests {
 }
 
 pub type Byte = u8; // raw memory will be typed as uint8
-pub type Word = i32; // the basic unit of the ijvm will be an int32
-pub const MAGIC_NUMBER: usize = 0x1DEADFAD;
+pub type Word = u32; // the basic unit of the ijvm will be an int32
+pub const MAGIC_NUMBER: u32 = 0x1DEADFAD;
+pub const HEADER_BYTE_LEN: usize = 4;
 
 pub enum Op {
     BIPUSH = 0x10,
@@ -43,7 +46,12 @@ pub enum Op {
     WIDE = 0xC4
 }
 
-pub struct IJVMError;
+pub enum IJVMError {
+    IOError(io::Error),
+    MalformedHeader,
+    InvalidHeader,
+    ByteCodeNotFound
+}
 
 impl Display for IJVMError {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -54,6 +62,54 @@ impl Display for IJVMError {
 impl Debug for IJVMError {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result { 
         write!(fmt, "IJVMError")
+    }
+}
+
+impl From<io::Error> for IJVMError {
+    fn from(error: io::Error) -> Self {
+        IJVMError::IOError(error)
+    }
+}
+
+pub fn parse_file<P: AsRef<Path>>(path: P) -> Result<Vec<Byte>, IJVMError> {
+    let mut file = File::open(path)?;
+    let bytes_to_read = file.metadata()
+        .map(|m| m.len() as usize)
+        .ok();
+    parse_reader(&mut file, bytes_to_read)
+}
+
+pub fn parse_reader(reader: &mut dyn io::Read, reader_byte_len: Option<usize>) -> Result<Vec<Byte>, IJVMError> {
+    let mut header_buf = [0; HEADER_BYTE_LEN];
+    // try read in the file header convert an unexpected EOF to an MalformedHeader error 
+    reader.read_exact(&mut header_buf)
+        .map_err(|io_err| {
+            match io_err.kind() {
+                io::ErrorKind::UnexpectedEof => IJVMError::MalformedHeader,
+                _ => IJVMError::IOError(io_err)
+            }
+        })?;
+
+    // TODO: convert from BigEdian to LittleEndian
+    let header: u32 = 0;
+
+    if header == MAGIC_NUMBER {
+        // We've already taken 4 bytes to check the header.
+        // And we want to allocate one extra byte so the buffer doesn't need to grow before the
+        // final `read` call at the end of the file. 4 - 1 = 3
+        let mut bytes = match reader_byte_len {
+            Some(byte_len) => Vec::with_capacity(byte_len - (HEADER_BYTE_LEN - 1)),
+            None => Vec::with_capacity(1)
+        };
+        let bytes_read = reader.read_to_end(&mut bytes)?;
+
+        if bytes_read > 0 {
+            Ok(bytes)
+        } else {
+            Err(IJVMError::ByteCodeNotFound)
+        }
+    } else {
+        Err(IJVMError::InvalidHeader)
     }
 }
 
