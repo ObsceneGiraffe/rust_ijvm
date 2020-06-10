@@ -12,17 +12,11 @@ mod tests {
     }
 }
 
-#[allow(dead_code)]
-type Byte = u8; /* raw memory will be typed as uint8 */
+pub type Byte = u8; // raw memory will be typed as uint8
+pub type Word = i32; // the basic unit of the ijvm will be an int32
+pub const MAGIC_NUMBER: usize = 0x1DEADFAD;
 
-#[allow(dead_code)]
-type Word = i32; /* the basic unit of the ijvm will be an int32 */
-
-#[allow(dead_code)]
-const MAGIC_NUMBER: usize = 0x1DEADFAD;
-
-#[allow(dead_code)]
-enum Op {
+pub enum Op {
     BIPUSH = 0x10,
     DUP = 0x59,
     ERR = 0xFE,
