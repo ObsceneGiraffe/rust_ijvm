@@ -1,0 +1,7 @@
+[workspace]
+
+members = [
+    "ijvm",
+    "ijvm_core",
+    "ijvm_x86"
+]
