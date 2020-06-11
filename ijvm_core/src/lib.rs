@@ -196,6 +196,7 @@ impl From<io::Error> for IJVMError {
     }
 }
 
+/// Parse the file at the given path into the program bytes e.g. the files bytes without the mime type.
 pub fn parse_file_to_program_bytes<P: AsRef<Path>>(path: P) -> VMResult<Vec<u8>> {
     let mut file = File::open(path)?;
     let bytes_to_read = file.metadata()
@@ -204,7 +205,7 @@ pub fn parse_file_to_program_bytes<P: AsRef<Path>>(path: P) -> VMResult<Vec<u8>>
     validate_and_strip_mime(&mut file, bytes_to_read)
 }
 
-/// validate and strip the mime type from given bytes
+/// Validate and strip the mime type from given bytes
 /// # Arguments
 /// * `reader` used to read in the bytes to process
 /// * `reader_byte_len` if the size of the reader is known ahead of reading, then supply it so that the buffer can be sized efficiently
@@ -241,6 +242,9 @@ pub fn validate_and_strip_mime(reader: &mut dyn io::Read, reader_byte_len: Optio
     }
 }
 
+/// Parse a single IJVM word.
+/// IJVM binary is Big Endian (BE) and so this function will convert the BE binary to the native endianess 
+/// x86 is Little Endian
 fn parse_word_u32<F>(reader: &mut dyn io::Read, on_eof: F) -> VMResult<u32> 
     where F: FnOnce() -> IJVMError {
     let mut buf = [0u8; WORD_BYTE_LEN];
@@ -254,18 +258,23 @@ fn parse_word_u32<F>(reader: &mut dyn io::Read, on_eof: F) -> VMResult<u32>
     Ok(u32::from_be_bytes(buf))
 }
 
+/// The i32 variant of parse_word
 fn parse_word_i32<F>(reader: &mut dyn io::Read, on_eof: F) -> VMResult<i32>
     where F: FnOnce() -> IJVMError {
     let value = parse_word_u32(reader, on_eof)?;
     Ok(value as i32)
 }
 
+/// Parses files bytes into a program.
+/// File bytes are a sequence of bytes with a mime type header
 pub fn parse_file_bytes_to_program(file_bytes: Vec<u8>) -> VMResult<Program> {
     let mut reader: &[u8] = &file_bytes[..];
     let program_bytes = validate_and_strip_mime(&mut reader, Some(file_bytes.len()))?;
     Ok(parse_program_bytes_to_program(program_bytes)?)
 }
 
+/// Parses program bytes into a program.
+/// Program bytes are a sequence of bytes without a mime type header
 pub fn parse_program_bytes_to_program(bytes: Vec<u8>) -> VMResult<Program> {
     let mut reader: &[u8] = &bytes;
     let cons_block = parse_constant_block(&mut reader)?;
@@ -279,6 +288,7 @@ pub fn parse_program_bytes_to_program(bytes: Vec<u8>) -> VMResult<Program> {
     )
 }
 
+/// Parses the constant block from a given reader
 fn parse_constant_block(reader: &mut dyn io::Read) -> VMResult<ConstantBlock> {
     let mut reader = reader; 
     let memory_origin = parse_word_u32(&mut reader, || IJVMError::ConstantBlockNotFound)?;
@@ -304,6 +314,7 @@ fn parse_constant_block(reader: &mut dyn io::Read) -> VMResult<ConstantBlock> {
     )
 } 
 
+/// Parses the code block from a given reader
 fn parse_code_block(reader: &mut dyn io::Read) -> VMResult<CodeBlock> {
     let mut reader = reader;
     let memory_origin = parse_word_u32(&mut reader, || IJVMError::CodeBlockNotFound)?;
