@@ -11,7 +11,86 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse() {
+    fn test_malformed_mime() {
+        let blob: [u8; 3] = [
+            0x1D, 0xEA, 0xDF,     // corrupt MIME type
+        ];
+
+        let mut reader: &[u8] = &blob;
+        let result = validate_and_strip_mime(&mut reader, Some(blob.len()));
+        assert_eq!(result, Err(IJVMError::MalformedMIME));
+    }
+
+    #[test]
+    fn test_invalid_mime() {
+        let blob: [u8; 4] = [
+            0x1D, 0xEA, 0xDF, 0x00,    // invalid MIME type
+        ];
+
+        let mut reader: &[u8] = &blob;
+        let result = validate_and_strip_mime(&mut reader, Some(blob.len()));
+        assert_eq!(result, Err(IJVMError::InvalidMIME));
+    }
+
+    #[test]
+    fn test_nonexistent_program() {
+        let blob: [u8; 4] = [
+            0x1D, 0xEA, 0xDF, 0xAD,     // valid MIME type
+        ];
+
+        let result = parse_file_bytes_to_program(blob.to_vec());
+        assert_eq!(result, Err(IJVMError::ProgramDataNotFound));
+    }
+
+    #[test]
+    fn test_empty_constant_block() {
+        let blob: [u8; 24] = [
+            0x1D, 0xEA, 0xDF, 0xAD,     // MIME type
+            0x00, 0x01, 0x00, 0x00,     // start constant block, memory origin
+            0x00, 0x00, 0x00, 0x00,     // constant block byte length, value: 0 bytes
+            0x00, 0x00, 0x00, 0x00,     // start code block, memory origin, value: 0
+            0x00, 0x00, 0x00, 0x04,     // code block byte length, value: 0x0F => 15 bytes
+            0x10, 0x70, 0x59, 0x10,     // BIPUSH, 0x70, DUP, BIPUSH,
+        ];
+
+        let result = parse_file_bytes_to_program(blob.to_vec());
+        assert!(result.is_ok());
+
+        let program = result.unwrap();
+
+        assert_eq!(program.constants.content.len(), 0);
+        assert_eq!(program.code.content.len(), 4);
+        assert_eq!(program.code.content[0], 0x10);
+        assert_eq!(program.code.content[3], 0x10);
+    }
+
+    #[test]
+    fn test_malformed_constant_block() {
+        let blob: [u8; 12] = [
+            0x1D, 0xEA, 0xDF, 0xAD,     // MIME type
+            0x00, 0x01, 0x00, 0x00,     // start constant block, memory origin
+            0x00, 0x00, 0x00, 0x0C,     // constant block byte length, value: 0x0C => 12 bytes
+        ];
+
+        let result = parse_file_bytes_to_program(blob.to_vec());
+        assert_eq!(result, Err(IJVMError::MalformedConstantBlock));
+    }
+
+    #[test]
+    fn test_malformed_constant_block_trailing_bytes() {
+        let blob: [u8; 14] = [
+            0x1D, 0xEA, 0xDF, 0xAD,     // MIME type
+            0x00, 0x01, 0x00, 0x00,     // start constant block, memory origin
+            0x00, 0x00, 0x00, 0x0C,     // constant block byte length, value: 0x0C => 12 bytes
+            0x46, 0x35
+        ];
+
+        let result = parse_file_bytes_to_program(blob.to_vec());
+        assert_eq!(result, Err(IJVMError::MalformedConstantBlock));
+    }
+
+    #[test]
+    fn test_parse_bytes_to_program() {
         let blob: [u8; 47] = [
             0x1D, 0xEA, 0xDF, 0xAD,     // MIME type
             0x00, 0x01, 0x00, 0x00,     // start constant block, memory origin
@@ -27,14 +106,8 @@ mod tests {
             0xFD, 0xFD, 0xFD,           // OUT, OUT, OUT
         ];
         
-        let mut reader: &[u8] = &blob;
-        let result = parse_reader_to_bytes(&mut reader, Some(blob.len()));
+        let result = parse_file_bytes_to_program(blob.to_vec());
         assert!(result.is_ok());
-
-        let bytes = result.unwrap();
-        let result = parse_bytes_to_program(bytes);
-        assert!(result.is_ok());
-
         let program = result.unwrap();
 
         assert_eq!(program.constants.content.len(), 3);
@@ -56,7 +129,8 @@ pub const MAGIC_NUMBER: i32 = 0x1DEADFAD;
 const DEFAULT_READ_BUFFER_SIZE: usize = 1000;
 const DEFAULT_STACK_SIZE: usize = 100;
 
-pub enum Op {
+#[derive(Copy, Clone)]
+pub enum Instruction {
     BIPUSH = 0x10,          // Push a byte onto stack arguments(byte)
     DUP = 0x59,             // Copy top word on stack and push onto stack arguments(N/A)
     ERR = 0xFE,             // Print an error message and halt the simulator arguments(N/A)
@@ -83,6 +157,7 @@ pub enum Op {
     WIDE = 0xC4             // Prefix instruction; next instruction has a 16-bit index  arguments(N/A)
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Block<T> {
     pub memory_origin: Word,
     pub content: Vec<T>
@@ -91,13 +166,15 @@ pub struct Block<T> {
 pub type ConstantBlock = Block<i32>;
 pub type CodeBlock = Block<u8>;
 
+#[derive(Debug, PartialEq)]
 pub struct Program {
     pub constants: ConstantBlock,
     pub code: CodeBlock
 }
 
+#[derive(Debug, PartialEq)]
 pub enum IJVMError {
-    IOError(io::Error),
+    IOError(io::ErrorKind),
     MalformedMIME,              // the MIME bytes were smaller than [HEADER_BYTE_LEN] bytes
     InvalidMIME,                // the MIME bytes did not match the IJVM spec
     ProgramDataNotFound,        // no program data was found in the 
@@ -113,34 +190,32 @@ impl Display for IJVMError {
     }
 }
 
-impl Debug for IJVMError {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result { 
-        write!(fmt, "IJVMError")
-    }
-}
-
 impl From<io::Error> for IJVMError {
     fn from(error: io::Error) -> Self {
-        IJVMError::IOError(error)
+        IJVMError::IOError(error.kind())
     }
 }
 
-pub fn parse_file_to_bytes<P: AsRef<Path>>(path: P) -> VMResult<Vec<u8>> {
+pub fn parse_file_to_program_bytes<P: AsRef<Path>>(path: P) -> VMResult<Vec<u8>> {
     let mut file = File::open(path)?;
     let bytes_to_read = file.metadata()
         .map(|m| m.len() as usize)
         .ok();
-    parse_reader_to_bytes(&mut file, bytes_to_read)
+    validate_and_strip_mime(&mut file, bytes_to_read)
 }
 
-pub fn parse_reader_to_bytes(reader: &mut dyn io::Read, reader_byte_len: Option<usize>) -> VMResult<Vec<u8>> {
+/// validate and strip the mime type from given bytes
+/// # Arguments
+/// * `reader` used to read in the bytes to process
+/// * `reader_byte_len` if the size of the reader is known ahead of reading, then supply it so that the buffer can be sized efficiently
+pub fn validate_and_strip_mime(reader: &mut dyn io::Read, reader_byte_len: Option<usize>) -> VMResult<Vec<u8>> {
     let mut header_buf = [0; HEADER_BYTE_LEN];
     // try read in the file header convert an unexpected EOF to an MalformedMIME error 
     reader.read_exact(&mut header_buf)
         .map_err(|io_err| {
             match io_err.kind() {
                 io::ErrorKind::UnexpectedEof => IJVMError::MalformedMIME,
-                _ => IJVMError::IOError(io_err)
+                _ => IJVMError::IOError(io_err.kind())
             }
         })?;
 
@@ -173,7 +248,7 @@ fn parse_word_u32<F>(reader: &mut dyn io::Read, on_eof: F) -> VMResult<u32>
         .map_err(|io_err|
             match io_err.kind() {
                 io::ErrorKind::UnexpectedEof => on_eof(),
-                _ => IJVMError::IOError(io_err)
+                _ => IJVMError::IOError(io_err.kind())
             }
         )?;
     Ok(u32::from_be_bytes(buf))
@@ -185,7 +260,13 @@ fn parse_word_i32<F>(reader: &mut dyn io::Read, on_eof: F) -> VMResult<i32>
     Ok(value as i32)
 }
 
-pub fn parse_bytes_to_program(bytes: Vec<u8>) -> Result<Program, IJVMError> {
+pub fn parse_file_bytes_to_program(file_bytes: Vec<u8>) -> VMResult<Program> {
+    let mut reader: &[u8] = &file_bytes[..];
+    let program_bytes = validate_and_strip_mime(&mut reader, Some(file_bytes.len()))?;
+    Ok(parse_program_bytes_to_program(program_bytes)?)
+}
+
+pub fn parse_program_bytes_to_program(bytes: Vec<u8>) -> VMResult<Program> {
     let mut reader: &[u8] = &bytes;
     let cons_block = parse_constant_block(&mut reader)?;
     let code_block = parse_code_block(&mut reader)?;
@@ -203,9 +284,7 @@ fn parse_constant_block(reader: &mut dyn io::Read) -> VMResult<ConstantBlock> {
     let memory_origin = parse_word_u32(&mut reader, || IJVMError::ConstantBlockNotFound)?;
     let byte_len = parse_word_u32(&mut reader, || IJVMError::ConstantBlockNotFound)? as usize;
 
-    if byte_len == 0 {
-        return Err(IJVMError::ConstantBlockNotFound)
-    } else if byte_len % WORD_BYTE_LEN != 0 {
+    if byte_len % WORD_BYTE_LEN != 0 {
         return Err(IJVMError::MalformedConstantBlock)
     }
 
@@ -252,6 +331,7 @@ fn parse_code_block(reader: &mut dyn io::Read) -> VMResult<CodeBlock> {
 pub struct IJVM {
     program: Program,
     pc: u32,
+    instruction: Instruction,
     stack: Vec<Word>,
     input_file: Option<File>,
     output_file: Option<File>
@@ -264,118 +344,111 @@ impl Drop for IJVM {
 }
 
 impl IJVM {
-    /**
-     * This function should return the word at the top of the stack of the current
-     * frame, interpreted as a signed integer.
-     **/
-    pub fn tos(&self) -> Word {
-        unimplemented!();
+    /// This function should return the word at the top of the stack of the current
+    /// frame, interpreted as a signed integer.
+    pub fn tos(&self) -> Option<&Word> {
+        self.stack.last()
     }
 
-    /**
-     * Returns the stack of the current frame as an array of integers,
-     * with entry[0] being the very bottom of the stack and
-     * entry[stack_size() - 1] being the top.
-     **/
+    /// Returns the stack of the current frame as an array of integers,
+    /// with entry[0] being the very bottom of the stack and
+    /// entry[stack_size() - 1] being the top.
     pub fn get_stack(&self) -> &Vec<Word> {
         &self.stack
     }
 
-    /**
-     * Returns the currently loaded program text as a byte array.
-     **/
-    pub fn get_program_bytes(&self) -> &Vec<u8> {
+    /// Returns the currently loaded program text as a byte array.
+    pub fn get_code_as_bytes(&self) -> &Vec<u8> {
         &self.program.code.content
     }
 
-    /**
-     * Returns the value of the program counter (as an offset from the first instruction).
-     **/
+    /// Returns the value of the program counter (as an offset from the first instruction).
     pub fn get_program_counter(&self) -> u32 {
         self.pc
     }
 
-    /**
-     * @param i, index of variable to obtain.
-     * @return Returns the i:th local variable of the current frame.
-     **/
+    /// Returns the i:th local variable of the current frame.
     pub fn get_local_variable(&self, _i: usize) -> Word {
         unimplemented!();
     }
 
-    /**
-     * @param i, index of the constant to obtain
-     * @return The constant at location i in the constant pool.
-     **/
+    /// Returns the constant at location i in the constant pool.
     pub fn get_constant(&self, i: usize) -> i32 {
         self.program.constants.content[i]
     }
 
-    /**
-     * Step (perform) one instruction and return.
-     * In the case of WIDE, perform the whole WIDE_ISTORE or WIDE_ILOAD.
-     * Returns true if an instruction was executed. Returns false if machine has
-     * halted or encountered an error.
-     **/
-    pub fn step() -> Result<(), IJVMError> {
+    /// Step (perform) one instruction and return.
+    /// In the case of WIDE, perform the whole WIDE_ISTORE or WIDE_ILOAD.
+    /// Returns true if an instruction was executed. Returns false if machine has
+    /// halted or encountered an error.
+    pub fn step(&self) -> Result<(), IJVMError> {
         unimplemented!();
     }
 
-    /**
-     * Check whether the machine has any more instructions to execute.
-     *
-     * A machine will stop running after:
-     * - reaching the end of the text section
-     * - encountering either the HALT/ERR instructions
-     * - encountering an invalid instruction
-     */
-    pub fn is_finished() -> bool {
+    /// Check whether the machine has any more instructions to execute.
+    /// 
+    /// A machine will stop running after:
+    /// * reaching the end of the text section
+    /// * encountering either the HALT/ERR instructions
+    /// * encountering an invalid instruction
+    pub fn is_finished(&self) -> bool {
         unimplemented!();
     }
 
-    /**
-     * Run the vm with the current state until the machine halts.
-     **/
-    pub fn run() {
+    /// Run the vm with the current state until the machine halts.
+    pub fn run(&self) {
         unimplemented!();
     }
 
-    /**
-     * @return The value of the current instruction represented as a u8.
-     *
-     * This should NOT increase the program counter.
-     **/
-    pub fn get_instruction() -> u8 {
-       unimplemented!();
+    /// Returns the value of the current instruction represented as a u8.
+    /// This should NOT increase the program counter.
+    pub fn get_instruction_as_byte(&self) -> u8 {
+        *self.get_instruction() as u8
     }
 
-    /**
-     * Sets the output of the IJVM instance to the provided file
-     **/
+    /// Returns the value of the current instruction represented as Rust enum.
+    /// This should NOT increase the program counter.
+    pub fn get_instruction(&self) -> &Instruction {
+       &self.instruction
+    }
+
+    /// Sets the output of the IJVM instance to the provided file
     pub fn set_output_file(&mut self, file: File) {
         self.output_file = Some(file);
     }
 
-    /**
-     * Sets the input of the IJVM instance to the provided file.
-     **/
+    /// Sets the input of the IJVM instance to the provided file.
     pub fn set_input_file(&mut self, file: File) {
         self.input_file = Some(file);
     }
 
-    pub fn init_with_bytes(bytes: Vec<u8>) -> Result<IJVM, IJVMError> {
-        let program = parse_bytes_to_program(bytes)?;
+    /// Accepts and parses the bytes for a program e.g. the mime type should be stripped off
+    /// # Arguments
+    /// * `bytes` program bytes can will be consumed by this VM
+    pub fn init_with_program_bytes(bytes: Vec<u8>) -> VMResult<IJVM> {
+        let program = parse_program_bytes_to_program(bytes)?;
         Ok(IJVM {
             program,
             pc: 0u32,
+            instruction: Instruction::BIPUSH,
             stack: Vec::with_capacity(DEFAULT_STACK_SIZE),
             input_file: None,
             output_file: None
         })
     }
 
-    pub fn init_with_file_path<P: AsRef<Path>>(file_path: P) -> Result<IJVM, IJVMError> {
-        let bytes = parse_file_to_bytes(&file_path)?;
-        IJVM::init_with_bytes(bytes)
+    /// Accepts and parses the bytes for a vm file e.g. the mime type is expected to be present
+    /// # Arguments
+    /// * `bytes` program bytes can will be consumed by this VM
+    pub fn init_with_file_bytes(bytes: Vec<u8>) -> VMResult<IJVM> {
+        let mut reader: &[u8] = &bytes;
+        let bytes = validate_and_strip_mime(&mut reader, Some(bytes.len()))?;
+        IJVM::init_with_program_bytes(bytes)
+    }
+
+    /// Accepts and parses the file at the given path.
+    pub fn init_with_file_path<P: AsRef<Path>>(file_path: P) -> VMResult<IJVM> {
+        let bytes = parse_file_to_program_bytes(&file_path)?;
+        IJVM::init_with_program_bytes(bytes)
     }
 }
