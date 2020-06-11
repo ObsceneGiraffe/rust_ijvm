@@ -100,12 +100,7 @@ mod tests {
         ];
 
         let result = parse_file_bytes_to_program(blob.to_vec());
-        assert!(result.is_ok());
-
-        let program = result.unwrap();
-
-        assert_eq!(program.constants.content.len(), 0);
-        assert_eq!(program.code.content.len(), 0);
+        assert_eq!(result, Err(IJVMError::EmptyCodeBlock));
     }
 
     #[test]
@@ -229,6 +224,7 @@ pub enum IJVMError {
     ConstantBlockNotFound,      // the constant block was not found in the program data
     MalformedConstantBlock,     // The contant block is not a multiple of [WORD_BYTE_LEN] bytes in size
     CodeBlockNotFound,          // the code block was not found in the program data
+    EmptyCodeBlock,             // the origin and header of a code were found, but the code block is empty 
     MalformedCodeBlock,         // if the code block is empty or not the expected number of bytes
 }
 
@@ -369,7 +365,7 @@ fn parse_code_block(reader: &mut dyn io::Read) -> VMResult<CodeBlock> {
     let byte_len = parse_word_u32(&mut reader, || IJVMError::CodeBlockNotFound)? as usize;
 
     if byte_len == 0 {
-        return Err(IJVMError::CodeBlockNotFound)
+        return Err(IJVMError::EmptyCodeBlock)
     }
 
     let mut bytes = Vec::with_capacity(byte_len);
