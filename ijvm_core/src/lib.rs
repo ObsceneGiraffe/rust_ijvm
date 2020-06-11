@@ -49,7 +49,7 @@ mod tests {
             0x00, 0x01, 0x00, 0x00,     // start constant block, memory origin
             0x00, 0x00, 0x00, 0x00,     // constant block byte length, value: 0 bytes
             0x00, 0x00, 0x00, 0x00,     // start code block, memory origin, value: 0
-            0x00, 0x00, 0x00, 0x04,     // code block byte length, value: 0x0F => 15 bytes
+            0x00, 0x00, 0x00, 0x04,     // code block byte length, value: 4 bytes
             0x10, 0x70, 0x59, 0x10,     // BIPUSH, 0x70, DUP, BIPUSH,
         ];
 
@@ -87,6 +87,54 @@ mod tests {
 
         let result = parse_file_bytes_to_program(blob.to_vec());
         assert_eq!(result, Err(IJVMError::MalformedConstantBlock));
+    }
+
+    #[test]
+    fn test_empty_code_block() {
+        let blob: [u8; 20] = [
+            0x1D, 0xEA, 0xDF, 0xAD,     // MIME type
+            0x00, 0x01, 0x00, 0x00,     // start constant block, memory origin
+            0x00, 0x00, 0x00, 0x00,     // constant block byte length, value: 0 bytes
+            0x00, 0x00, 0x00, 0x00,     // start code block, memory origin, value: 0
+            0x00, 0x00, 0x00, 0x00,     // code block byte length, value: 0 bytes
+        ];
+
+        let result = parse_file_bytes_to_program(blob.to_vec());
+        assert!(result.is_ok());
+
+        let program = result.unwrap();
+
+        assert_eq!(program.constants.content.len(), 0);
+        assert_eq!(program.code.content.len(), 0);
+    }
+
+    #[test]
+    fn test_malformed_code_block() {
+        let blob: [u8; 20] = [
+            0x1D, 0xEA, 0xDF, 0xAD,     // MIME type
+            0x00, 0x01, 0x00, 0x00,     // start constant block, memory origin
+            0x00, 0x00, 0x00, 0x00,     // constant block byte length, value: 0x0C => 12 bytes
+            0x00, 0x00, 0x00, 0x00,     // start code block, memory origin, value: 0
+            0x00, 0x00, 0x00, 0x04,     // code block byte length, value: 4 bytes
+        ];
+
+        let result = parse_file_bytes_to_program(blob.to_vec());
+        assert_eq!(result, Err(IJVMError::MalformedCodeBlock));
+    }
+
+    #[test]
+    fn test_malformed_code_block_trailing_bytes() {
+        let blob: [u8; 22] = [
+            0x1D, 0xEA, 0xDF, 0xAD,     // MIME type
+            0x00, 0x01, 0x00, 0x00,     // start constant block, memory origin
+            0x00, 0x00, 0x00, 0x00,     // constant block byte length, value: 0x0C => 12 bytes
+            0x00, 0x00, 0x00, 0x00,     // start code block, memory origin, value: 0
+            0x00, 0x00, 0x00, 0x04,     // code block byte length, value: 0 bytes
+            0xEA, 0xAD
+        ];
+
+        let result = parse_file_bytes_to_program(blob.to_vec());
+        assert_eq!(result, Err(IJVMError::MalformedCodeBlock));
     }
 
     #[test]
