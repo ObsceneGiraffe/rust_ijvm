@@ -33,7 +33,7 @@ pub fn err(_state: &mut IJVMState) -> VMResult<()> {
 pub fn goto<T>(code_stream: &mut T) -> VMResult<()> 
     where T: io::Read + io::Seek {
     let offset = parse::offset(code_stream, || IJVMError::MalformedOffset)?;
-    code_stream.seek(SeekFrom::Start(offset as u64))?;
+    code_stream.seek(SeekFrom::Current(offset as i64))?;
     Ok(())
 }
 

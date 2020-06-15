@@ -162,7 +162,7 @@ pub fn word_i32<F>(stream: &mut dyn io::Read, on_eof: F) -> VMResult<i32>
     Ok(value as i32)
 }
 
-pub fn offset<F>(stream: &mut dyn io::Read, on_eof: F) -> VMResult<u16> 
+pub fn offset<F>(stream: &mut dyn io::Read, on_eof: F) -> VMResult<i16> 
     where F: FnOnce() -> IJVMError {
     let mut buf = [0u8; OFFSET_BYTE_LEN];
     stream.read_exact(&mut buf)
@@ -172,5 +172,5 @@ pub fn offset<F>(stream: &mut dyn io::Read, on_eof: F) -> VMResult<u16>
             _ => IJVMError::IOError(io_err.kind())
         }
     )?;
-    Ok(u16::from_be_bytes(buf))
+    Ok(i16::from_be_bytes(buf))
 }
