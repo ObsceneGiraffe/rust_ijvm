@@ -15,7 +15,8 @@ pub fn bipush(stack: &mut Vec<i32>, code_stream: &mut dyn io::Read) -> VMResult<
 
 /// Copy top word on stack and push onto stack arguments(N/A)
 pub fn dup(stack: &mut Vec<i32>) -> VMResult<()> {
-    let value = *stack.last().unwrap();
+    let value = *stack.last()
+        .ok_or_else(|| IJVMError::OperationAttemptedOnEmptyStack)?;
     stack.push(value);
     Ok(())
 }
@@ -188,7 +189,7 @@ pub fn wide() -> VMResult<()> {
 
 fn pop_one(stack: &mut Vec<i32>) -> VMResult<i32> {
     let val = stack.pop()
-        .ok_or_else(|| IJVMError::PopAttemptedOnEmptyStack)?;
+        .ok_or_else(|| IJVMError::OperationAttemptedOnEmptyStack)?;
     Ok(val)
 }
 

@@ -141,7 +141,7 @@ pub enum IJVMError {
     ReadPastProgramData,            // if the fetch reads past the end of program data
     StepWithNoInstructionPrimed,    // if a step is requested with no instruction primed
     ExpectedInstructionArgument,    // if a instruction with an argument is being executed but the EOF is reached
-    PopAttemptedOnEmptyStack,       // if a pop is attempted on an empty stack 
+    OperationAttemptedOnEmptyStack, // if a pop is attempted on an empty stack 
     MalformedOffset,                // if a offset is expected but EOF is reached
 }
 
@@ -173,6 +173,7 @@ pub enum IJVMState {
 
 #[derive(Debug, PartialEq)]
 pub enum HaltReason {
+    EndOfCode,
     HALTInstruction,
     ERRInstruction,
     Error(IJVMError)
@@ -302,7 +303,10 @@ impl IJVM {
     /// * encountering either the HALT/ERR instructions
     /// * encountering an invalid instruction
     pub fn is_finished(&self) -> bool {
-        unimplemented!();
+        match self.state {
+            IJVMState::Halted(_) => true,
+            _ => false
+        }
     }
 
     /// Run the vm with the current state until the machine halts.
