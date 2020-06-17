@@ -1,2 +1,4 @@
 *.ijvm linguist-detectable=false
 *.jas linguist-detectable=false
+*.bf linguist-detectable=false
+*.b linguist-detectable=false
